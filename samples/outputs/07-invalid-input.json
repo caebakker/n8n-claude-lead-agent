@@ -1,0 +1,9 @@
+{
+  "ok": false,
+  "error": "validation_failed",
+  "messages": [
+    "name is required.",
+    "email is required.",
+    "website is required."
+  ]
+}

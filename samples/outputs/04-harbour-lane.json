@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "duplicate": false,
+  "lead": {
+    "name": "Helen Okonkwo",
+    "email": "helen.okonkwo@harbourlane.example",
+    "company": "Harbour Lane Analytics",
+    "website": "https://example.com",
+    "linkedinUrl": "https://example.com/in/helen-okonkwo",
+    "notes": "Head of ops at a B2B analytics company, about 80 people. Wants HubSpot and the billing tool to share account status. Mentions webhooks and a weekly export that someone pastes into a sheet."
+  },
+  "website": {
+    "fetched": true,
+    "statusCode": 200,
+    "excerpt": "Example Domain This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.",
+    "error": null
+  },
+  "qualification": {
+    "summary": "Harbour Lane Analytics sells analytics to other businesses and has about 80 people. The operations lead wants HubSpot and billing to share account status, replacing a weekly export that is pasted into a sheet.",
+    "industry": "B2B analytics",
+    "companySize": "50-249",
+    "score": 81,
+    "tier": "hot",
+    "reasons": [
+      "A head of ops is the buyer, at a B2B company of about 80 people.",
+      "HubSpot and the billing tool are out of sync, and someone pastes a weekly export into a sheet.",
+      "The notes mention webhooks, so there is a clear technical path for a first engagement."
+    ],
+    "suggestedFirstLine": "The weekly paste from billing into a sheet, while HubSpot holds the account status, is a webhook job I would scope as a short first engagement."
+  },
+  "routing": {
+    "tier": "hot",
+    "action": "crm_upsert",
+    "crm": {
+      "provider": "stub",
+      "action": "upserted",
+      "id": "stub_helen_okonkwo_harbourlane_example"
+    },
+    "notification": "disabled"
+  },
+  "model": {
+    "mode": "mock",
+    "name": "claude-sonnet-5-5",
+    "attempts": 1,
+    "envAccess": true
+  }
+}

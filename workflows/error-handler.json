@@ -1,0 +1,111 @@
+{
+  "name": "Lead agent error handler",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "nodes": [
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000046",
+      "name": "Error trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000047",
+      "name": "Format error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function pushError(entry) {\n  const store = $getWorkflowStaticData('global');\n  if (!Array.isArray(store.errorLog)) store.errorLog = [];\n  store.errorLog.push({ at: new Date().toISOString(), ...entry });\n  if (store.errorLog.length > 50) store.errorLog.splice(0, store.errorLog.length - 50);\n}\n\n\nconst item = $input.first().json;\nconst execution = item.execution || {};\nconst error = execution.error || item.error || {};\nconst message = error.message || 'Unknown workflow error';\n\npushError({\n  kind: 'error_workflow',\n  workflow: item.workflow && item.workflow.name ? item.workflow.name : 'unknown',\n  executionId: execution.id || null,\n  lastNode: execution.lastNodeExecuted || null,\n  message: String(message).slice(0, 500),\n});\n\nreturn [\n  {\n    json: {\n      logged: true,\n      workflow: item.workflow || null,\n      executionId: execution.id || null,\n      lastNode: execution.lastNodeExecuted || null,\n      message: String(message).slice(0, 500),\n    },\n  },\n];"
+      },
+      "notes": "Keeps the last 50 crash notes in this workflow's own static data. The executions list is the full log."
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000048",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        800,
+        280
+      ],
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#leads"
+        },
+        "messageType": "text",
+        "text": "={{ 'Lead agent error in ' + ($json.lastNode || 'unknown node') + ': ' + $json.message }}"
+      },
+      "disabled": true,
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_SLACK_CREDENTIAL_ID",
+          "name": "Slack bot token (placeholder)"
+        }
+      },
+      "notes": "Disabled by default. This is a separate workflow, so it needs its own Slack credential selection."
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000049",
+      "name": "Sticky: error workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        40
+      ],
+      "parameters": {
+        "content": "## Error workflow\n\nImport this beside the lead agent, then open the lead agent settings and choose this workflow as the error workflow.\n\nn8n only runs it when an execution crashes. The lead agent already answers the webhook from its own error branch for bad input, bad JSON, and Claude HTTP failures.",
+        "height": 200,
+        "width": 460,
+        "color": 2
+      }
+    }
+  ],
+  "connections": {
+    "Error trigger": {
+      "main": [
+        [
+          {
+            "node": "Format error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format error": {
+      "main": [
+        [
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
