@@ -1,0 +1,34 @@
+{
+  "name": "B2B teams with a repetitive handoff",
+  "offer": "A freelance engagement to connect tools, webhooks, and light AI steps so operators stop retyping the same data.",
+  "mustHave": [
+    "Sells to other businesses",
+    "About 10 to 250 people",
+    "More than one system of record, such as a CRM, billing tool, inbox, or spreadsheet",
+    "A person can point at a repetitive handoff"
+  ],
+  "niceToHave": [
+    "A founder or operations lead is the likely buyer",
+    "The pain is described in the lead notes, not only implied",
+    "UK or European time zones"
+  ],
+  "disqualify": [
+    "Consumer-only brand",
+    "Enterprise procurement as the only way in",
+    "No operational task to automate"
+  ],
+  "tiers": {
+    "hot": {
+      "minScore": 75,
+      "meaning": "Worth a same-week conversation and a CRM record"
+    },
+    "warm": {
+      "minScore": 50,
+      "meaning": "Plausible fit, review before outreach"
+    },
+    "cold": {
+      "minScore": 0,
+      "meaning": "Log only"
+    }
+  }
+}
