@@ -1,0 +1,11 @@
+{
+  "name": "n8n-claude-lead-agent",
+  "private": true,
+  "description": "Sample n8n workflow that enriches and qualifies a lead with Claude.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-workflow.mjs",
+    "check": "node scripts/check-workflow.mjs && node scripts/test-qualify.mjs",
+    "post-samples": "node scripts/post-samples.mjs --check"
+  }
+}

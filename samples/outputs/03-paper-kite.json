@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "duplicate": false,
+  "lead": {
+    "name": "Priya Shah",
+    "email": "priya.shah@paperkite.example",
+    "company": "Paper Kite Studio",
+    "website": "https://example.net",
+    "linkedinUrl": null,
+    "notes": "Two-person illustration studio selling prints to consumers through a shop. No CRM. Asking about a nicer contact form, not an integration."
+  },
+  "website": {
+    "fetched": true,
+    "statusCode": 200,
+    "excerpt": "Example Domain This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.",
+    "error": null
+  },
+  "qualification": {
+    "summary": "Paper Kite Studio is a two-person illustration practice selling prints to consumers. The request is for a contact form, with no CRM and no operational handoff described.",
+    "industry": "Consumer retail",
+    "companySize": "1-9",
+    "score": 28,
+    "tier": "cold",
+    "reasons": [
+      "The studio sells prints to consumers, which the ICP treats as a poor fit.",
+      "A team of two is below the 10 to 250 people range.",
+      "The request is a contact form, not a repetitive handoff between systems."
+    ],
+    "suggestedFirstLine": "I mostly help B2B teams join up tools they already use, so I am probably not the right fit for a consumer print shop, but I am happy to point you at a simpler form setup."
+  },
+  "routing": {
+    "tier": "cold",
+    "action": "log_only",
+    "crm": {
+      "provider": "none",
+      "action": "skipped"
+    },
+    "notification": "not_sent"
+  },
+  "model": {
+    "mode": "mock",
+    "name": "claude-sonnet-5-5",
+    "attempts": 1,
+    "envAccess": true
+  }
+}

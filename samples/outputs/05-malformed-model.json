@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "error": "model_output_invalid",
+  "messages": [
+    "no JSON object in the model output"
+  ],
+  "attempts": 2
+}

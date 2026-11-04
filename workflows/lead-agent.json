@@ -1,0 +1,1533 @@
+{
+  "name": "Lead enrichment and qualification",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionTimeout": 120
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodes": [
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000001",
+      "name": "Sticky: start",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -40
+      ],
+      "parameters": {
+        "content": "## Start here\n\nPOST one lead as JSON to `/webhook/lead-agent`.\n\nThis sample has no webhook authentication. Add Header Auth before you expose it.\n\n`CLAUDE_MODE=mock` and `CRM_MODE=stub` are the defaults, so the demo runs with no API keys. Set `live` and `hubspot` when you are ready to call those APIs.",
+        "height": 280,
+        "width": 420,
+        "color": 4
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000002",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        400,
+        280
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "c0ffee00-0000-4000-8000-0000000000aa",
+      "notes": "Production URL ends in /webhook/lead-agent. The test URL is only active while you listen in the editor."
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000003",
+      "name": "Load config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Synced from prompts/icp.json and prompts/system-prompt.md by scripts/build-workflow.mjs\nfunction readEnv(name, fallback) {\n  try {\n    const value = $env[name];\n    if (value === undefined || value === null) return fallback;\n    const text = String(value).trim();\n    return text === '' ? fallback : text;\n  } catch (error) {\n    return fallback;\n  }\n}\n\nlet envAccess = true;\ntry {\n  void $env;\n} catch (error) {\n  envAccess = false;\n}\n\nconst icp = {\"name\":\"B2B teams with a repetitive handoff\",\"offer\":\"A freelance engagement to connect tools, webhooks, and light AI steps so operators stop retyping the same data.\",\"mustHave\":[\"Sells to other businesses\",\"About 10 to 250 people\",\"More than one system of record, such as a CRM, billing tool, inbox, or spreadsheet\",\"A person can point at a repetitive handoff\"],\"niceToHave\":[\"A founder or operations lead is the likely buyer\",\"The pain is described in the lead notes, not only implied\",\"UK or European time zones\"],\"disqualify\":[\"Consumer-only brand\",\"Enterprise procurement as the only way in\",\"No operational task to automate\"],\"tiers\":{\"hot\":{\"minScore\":75,\"meaning\":\"Worth a same-week conversation and a CRM record\"},\"warm\":{\"minScore\":50,\"meaning\":\"Plausible fit, review before outreach\"},\"cold\":{\"minScore\":0,\"meaning\":\"Log only\"}}};\nconst systemPrompt = \"You qualify one B2B lead for a freelance automation and integrations practice.\\n\\nYou receive an ideal customer profile (ICP), a lead, and text taken from the company website. Decide fit only from those inputs. Do not invent revenue, headcount, funding, or product names. If the input does not support a fact, use \\\"unknown\\\".\\n\\nReturn one JSON object and nothing else. No markdown fences. No commentary before or after the JSON.\\n\\nThe object must contain exactly these keys:\\n- summary: two sentences on what the company appears to do\\n- industry: a short label, or \\\"unknown\\\"\\n- companySize: one of \\\"1-9\\\", \\\"10-49\\\", \\\"50-249\\\", \\\"250-999\\\", \\\"1000+\\\", \\\"unknown\\\"\\n- score: an integer from 0 to 100, higher meaning a better fit for the ICP\\n- tier: \\\"hot\\\", \\\"warm\\\", or \\\"cold\\\", using the tier thresholds in the ICP\\n- reasons: an array of 2 to 4 short strings, each citing the lead or the website text\\n- suggestedFirstLine: one sentence the sender can paste as the opening line of an email. Do not invent a personal connection. Do not use the contact's name if it was not provided.\\n\\nIf the website text is empty, say so inside summary or reasons and score from the lead alone.\";\nconst item = $input.first().json;\nconst claudeMode = readEnv('CLAUDE_MODE', 'mock').toLowerCase() === 'live' ? 'live' : 'mock';\nconst crmMode = readEnv('CRM_MODE', 'stub').toLowerCase() === 'hubspot' ? 'hubspot' : 'stub';\nconst body = item.body !== undefined ? item.body : item;\n\nreturn [\n  {\n    json: {\n      config: {\n        claudeMode,\n        claudeModel: readEnv('CLAUDE_MODEL', 'claude-sonnet-5-5'),\n        crmMode,\n        envAccess,\n        maxAttempts: 2,\n        icp,\n        systemPrompt,\n      },\n      request: {\n        body,\n        headers: item.headers || {},\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000004",
+      "name": "Normalise lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $input.first().json;\nlet payload = state.request ? state.request.body : null;\nif (typeof payload === 'string') {\n  try {\n    payload = JSON.parse(payload);\n  } catch (error) {\n    payload = null;\n  }\n}\n\nconst errors = [];\nif (!payload || typeof payload !== 'object' || Array.isArray(payload)) {\n  errors.push('Body must be a JSON object with name, email, company, and website.');\n  return [{ json: { ...state, valid: false, validationErrors: errors, lead: null, force: null } }];\n}\n\nfunction clean(value) {\n  if (value === undefined || value === null) return '';\n  return String(value).replace(/\\s+/g, ' ').trim();\n}\n\nconst name = clean(payload.name);\nconst email = clean(payload.email).toLowerCase();\nconst company = clean(payload.company);\nlet website = clean(payload.website);\nconst linkedinRaw = clean(payload.linkedinUrl || payload.linkedin || '');\nlet notes = typeof payload.notes === 'string' ? payload.notes.replace(/\\s+/g, ' ').trim() : '';\n\nif (!name) errors.push('name is required.');\nif (!email) errors.push('email is required.');\nelse if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) errors.push('email is not a valid address.');\nif (!company) errors.push('company is required.');\nfunction httpUrl(value) {\n  let url = value;\n  if (!/^https?:\\/\\//i.test(url)) url = `https://${url}`;\n  if (!/^https?:\\/\\/[^\\s/$.?#].[^\\s]*$/i.test(url)) return null;\n  return url;\n}\n\nif (!website) errors.push('website is required.');\nelse {\n  const parsed = httpUrl(website);\n  if (!parsed) errors.push('website is not a valid URL.');\n  else website = parsed;\n}\n\nlet linkedinUrl = null;\nif (linkedinRaw) {\n  const parsed = httpUrl(linkedinRaw);\n  if (!parsed) errors.push('linkedinUrl is not a valid URL.');\n  else linkedinUrl = parsed;\n}\n\nif (notes.length > 4000) notes = notes.slice(0, 4000);\nconst originalNotes = notes;\nlet force = null;\nif (/\\bFORCE_MALFORMED_ONCE\\b/.test(originalNotes)) force = 'once';\nelse if (/\\bFORCE_MALFORMED\\b/.test(originalNotes)) force = 'malformed';\nnotes = notes\n  .replace(/\\bFORCE_MALFORMED_ONCE\\b/g, '')\n  .replace(/\\bFORCE_MALFORMED\\b/g, '')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nconst nameParts = name.split(' ').filter(Boolean);\nconst headers = state.request.headers || {};\nconst resetHeader = headers['x-reset-store'] || headers['X-Reset-Store'] || '';\n\nreturn [\n  {\n    json: {\n      ...state,\n      valid: errors.length === 0,\n      validationErrors: errors,\n      force,\n      resetStore: String(resetHeader).toLowerCase() === 'true',\n      lead: {\n        name,\n        firstName: nameParts[0] || '',\n        lastName: nameParts.slice(1).join(' '),\n        email,\n        company,\n        website,\n        linkedinUrl,\n        notes,\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000005",
+      "name": "Input valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1240,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "input-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000006",
+      "name": "Shape invalid input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $input.first().json;\nreturn [\n  {\n    json: {\n      ok: false,\n      error: 'validation_failed',\n      messages: state.validationErrors || ['The lead could not be validated.'],\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000007",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1520,
+        560
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000008",
+      "name": "Deduplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $input.first().json;\nconst store = $getWorkflowStaticData('global');\nif (!store.leads || (state.resetStore && state.config.claudeMode === 'mock')) store.leads = {};\nif (!Array.isArray(store.errorLog)) store.errorLog = [];\n\nconst existing = store.leads[state.lead.email];\nif (existing) {\n  return [{ json: { ...state, duplicate: true, stored: existing } }];\n}\nreturn [{ json: { ...state, duplicate: false } }];"
+      },
+      "notes": "Stores completed leads in workflow static data, keyed by email. Swap this node for an n8n Data table or a Google Sheet when you leave the demo.",
+      "notesInFlow": true
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000009",
+      "name": "Already seen?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1800,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "already-seen",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000010",
+      "name": "Shape duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const stored = $input.first().json.stored;\nreturn [\n  {\n    json: {\n      ok: true,\n      duplicate: true,\n      lead: stored.lead,\n      website: stored.website,\n      qualification: stored.qualification,\n      routing: stored.routing,\n      model: stored.model,\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000011",
+      "name": "Fetch website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2080,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.lead.website }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "lead-agent-sample/1.0"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "html"
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000012",
+      "name": "Extract website text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2360,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function htmlToText(html) {\n  if (typeof html !== 'string' || html.trim() === '') return '';\n  return html\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ')\n    .replace(/&amp;/gi, '&')\n    .replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>')\n    .replace(/&#39;/gi, \"'\")\n    .replace(/&quot;/gi, '\"')\n    .replace(/\\s+/g, ' ')\n    .trim()\n    .slice(0, 6000);\n}\n\nconst prior = $('Deduplicate').first().json;\nconst response = $input.first().json;\nconst statusCode = Number(response.statusCode || 0);\nconst html = typeof response.html === 'string' ? response.html : '';\nconst excerpt = htmlToText(html);\nconst fetched = statusCode >= 200 && statusCode < 400 && excerpt.length > 0;\n\nreturn [\n  {\n    json: {\n      ...prior,\n      website: {\n        fetched,\n        statusCode: statusCode || null,\n        excerpt,\n        error: fetched ? null : `Website returned status ${statusCode || 'unknown'} and no readable text.`,\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000013",
+      "name": "Website fetch failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2360,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const prior = $('Deduplicate').first().json;\nconst errorItem = $input.first().json;\nconst raw = errorItem.error || errorItem;\nconst message =\n  (raw && (raw.message || raw.description)) ||\n  errorItem.message ||\n  'Website request failed.';\n\nreturn [\n  {\n    json: {\n      ...prior,\n      website: {\n        fetched: false,\n        statusCode: null,\n        excerpt: '',\n        error: typeof message === 'string' ? message : JSON.stringify(message),\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000014",
+      "name": "Prepare qualification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $input.first().json;\nconst leadForModel = {\n  name: state.lead.name,\n  email: state.lead.email,\n  company: state.lead.company,\n  website: state.lead.website,\n  linkedinUrl: state.lead.linkedinUrl,\n  notes: state.lead.notes,\n};\nconst user = [\n  'ICP JSON:',\n  JSON.stringify(state.config.icp),\n  '',\n  'Lead JSON:',\n  JSON.stringify(leadForModel),\n  '',\n  'Website text:',\n  state.website.excerpt || '(none)',\n  state.website.error ? `Website note: ${state.website.error}` : '',\n  '',\n  'Return the JSON object now.',\n]\n  .filter((line) => line !== '')\n  .join('\\n');\n\nconst claudeRequest = {\n  model: state.config.claudeModel,\n  max_tokens: 4000,\n  system: state.config.systemPrompt,\n  messages: [{ role: 'user', content: user }],\n};\n\nreturn [\n  {\n    json: {\n      ...state,\n      prompt: { system: state.config.systemPrompt, user },\n      claudeRequest,\n      attempts: 0,\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000015",
+      "name": "Use live Claude?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2920,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "claude-mode",
+              "leftValue": "={{ $json.config.claudeMode }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000016",
+      "name": "Claude attempt 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3200,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.claudeRequest) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_ANTHROPIC_HEADER_AUTH_ID",
+          "name": "Anthropic x-api-key (placeholder)"
+        }
+      },
+      "notes": "Placeholder credential only. Create a Header Auth credential with name x-api-key and your Anthropic key, then select it here. This node does not run when CLAUDE_MODE is mock.",
+      "notesInFlow": true
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000017",
+      "name": "Mock attempt 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const COMPANY_SIZES = ['1-9', '10-49', '50-249', '250-999', '1000+', 'unknown'];\n\nconst FIXTURES = {\n  'mara.ellison@northwind.example': {\n    summary:\n      'Northwind Provisions supplies independent cafes and shops on a wholesale basis. Orders still arrive by email and are retyped into the CRM, which is the kind of handoff this offer is built for.',\n    industry: 'Wholesale food supply',\n    companySize: '10-49',\n    score: 86,\n    tier: 'hot',\n    reasons: [\n      'The notes name a founder and a team of about 40 people, inside the ICP size range.',\n      'Retyping emailed orders into a CRM is a concrete repetitive handoff.',\n      'The company sells to other businesses rather than to consumers.',\n    ],\n    suggestedFirstLine:\n      'The emailed orders you still retype into the CRM are a small, well bounded automation, and I would like to show you how I would connect that inbox to HubSpot.',\n  },\n  'jonas.pell@lumenfield.example': {\n    summary:\n      'Lumen Field Services sends technicians to facilities clients and keeps job sheets in spreadsheets plus a separate scheduling tool. Invoicing is still manual, though some automations already exist.',\n    industry: 'Field services',\n    companySize: '10-49',\n    score: 64,\n    tier: 'warm',\n    reasons: [\n      'An operations manager is named, with 18 technicians, which sits in the ICP size range.',\n      'Job sheets and invoicing still cross a spreadsheet and a scheduling tool.',\n      'Some automations already exist, so the remaining gap needs a look before a strong fit is claimed.',\n    ],\n    suggestedFirstLine:\n      'You already have a few automations in place, and the manual step from job sheet to invoice looks like the next one worth mapping.',\n  },\n  'priya.shah@paperkite.example': {\n    summary:\n      'Paper Kite Studio is a two-person illustration practice selling prints to consumers. The request is for a contact form, with no CRM and no operational handoff described.',\n    industry: 'Consumer retail',\n    companySize: '1-9',\n    score: 28,\n    tier: 'cold',\n    reasons: [\n      'The studio sells prints to consumers, which the ICP treats as a poor fit.',\n      'A team of two is below the 10 to 250 people range.',\n      'The request is a contact form, not a repetitive handoff between systems.',\n    ],\n    suggestedFirstLine:\n      'I mostly help B2B teams join up tools they already use, so I am probably not the right fit for a consumer print shop, but I am happy to point you at a simpler form setup.',\n  },\n  'helen.okonkwo@harbourlane.example': {\n    summary:\n      'Harbour Lane Analytics sells analytics to other businesses and has about 80 people. The operations lead wants HubSpot and billing to share account status, replacing a weekly export that is pasted into a sheet.',\n    industry: 'B2B analytics',\n    companySize: '50-249',\n    score: 81,\n    tier: 'hot',\n    reasons: [\n      'A head of ops is the buyer, at a B2B company of about 80 people.',\n      'HubSpot and the billing tool are out of sync, and someone pastes a weekly export into a sheet.',\n      'The notes mention webhooks, so there is a clear technical path for a first engagement.',\n    ],\n    suggestedFirstLine:\n      'The weekly paste from billing into a sheet, while HubSpot holds the account status, is a webhook job I would scope as a short first engagement.',\n  },\n};\n\nfunction expectedTier(score, icp) {\n  if (score >= icp.tiers.hot.minScore) return 'hot';\n  if (score >= icp.tiers.warm.minScore) return 'warm';\n  return 'cold';\n}\n\nfunction parseModelText(rawText) {\n  if (typeof rawText !== 'string' || rawText.trim() === '') {\n    return { ok: false, errors: ['model output was empty'], value: null };\n  }\n  let text = rawText.trim();\n  const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/i);\n  if (fenced) text = fenced[1].trim();\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n  if (start === -1 || end <= start) {\n    return { ok: false, errors: ['no JSON object in the model output'], value: null };\n  }\n  try {\n    return { ok: true, errors: [], value: JSON.parse(text.slice(start, end + 1)) };\n  } catch (error) {\n    return { ok: false, errors: [`JSON.parse failed: ${error.message}`], value: null };\n  }\n}\n\nfunction validateQualification(qualification, icp) {\n  const errors = [];\n  if (!qualification || typeof qualification !== 'object' || Array.isArray(qualification)) {\n    return ['qualification must be a JSON object'];\n  }\n  const allowed = [\n    'summary',\n    'industry',\n    'companySize',\n    'score',\n    'tier',\n    'reasons',\n    'suggestedFirstLine',\n  ];\n  for (const key of Object.keys(qualification)) {\n    if (!allowed.includes(key)) errors.push(`unexpected key: ${key}`);\n  }\n  for (const key of ['summary', 'industry', 'suggestedFirstLine']) {\n    if (typeof qualification[key] !== 'string' || qualification[key].trim() === '') {\n      errors.push(`${key} must be a non-empty string`);\n    }\n  }\n  if (typeof qualification.summary === 'string' && qualification.summary.length > 800) {\n    errors.push('summary is longer than 800 characters');\n  }\n  if (\n    typeof qualification.suggestedFirstLine === 'string' &&\n    qualification.suggestedFirstLine.length > 500\n  ) {\n    errors.push('suggestedFirstLine is longer than 500 characters');\n  }\n  if (!COMPANY_SIZES.includes(qualification.companySize)) {\n    errors.push('companySize is not an allowed value');\n  }\n  if (!Number.isInteger(qualification.score) || qualification.score < 0 || qualification.score > 100) {\n    errors.push('score must be an integer from 0 to 100');\n  }\n  if (!['hot', 'warm', 'cold'].includes(qualification.tier)) {\n    errors.push('tier must be hot, warm, or cold');\n  } else if (Number.isInteger(qualification.score) && qualification.tier !== expectedTier(qualification.score, icp)) {\n    errors.push('tier does not match the score and the ICP thresholds');\n  }\n  if (\n    !Array.isArray(qualification.reasons) ||\n    qualification.reasons.length < 2 ||\n    qualification.reasons.length > 4 ||\n    qualification.reasons.some((reason) => typeof reason !== 'string' || reason.trim() === '')\n  ) {\n    errors.push('reasons must be 2 to 4 non-empty strings');\n  }\n  return errors;\n}\n\nfunction companySizeFromNotes(notes) {\n  const sizeMatch = String(notes).match(/\\b(\\d+)\\s*(people|staff|employees|technicians)\\b/i);\n  if (!sizeMatch) return { companySize: 'unknown', count: null };\n  const count = Number(sizeMatch[1]);\n  let companySize = '1000+';\n  if (count < 10) companySize = '1-9';\n  else if (count < 50) companySize = '10-49';\n  else if (count < 250) companySize = '50-249';\n  else if (count < 1000) companySize = '250-999';\n  return { companySize, count };\n}\n\nfunction scoreUnknownLead(lead, websiteText, icp) {\n  const notes = `${lead.notes || ''} ${lead.company || ''}`;\n  let score = 38;\n  const reasons = [];\n\n  if (/\\b(b2b|wholesale|clients|customers|teams)\\b/i.test(notes)) {\n    score += 14;\n    reasons.push('The notes describe a business that sells to other organisations.');\n  } else {\n    score -= 6;\n    reasons.push('The notes do not clearly show a B2B buyer.');\n  }\n\n  if (/\\b(manual|spreadsheet|retype|re-type|webhook|crm|hubspot|by hand|paste)\\b/i.test(notes)) {\n    score += 18;\n    reasons.push('The notes name a repetitive handoff between tools.');\n  } else {\n    score -= 8;\n    reasons.push('No concrete operational handoff is described.');\n  }\n\n  if (/\\b(consumer|d2c|etsy|prints|shoppers)\\b/i.test(notes)) {\n    score -= 24;\n    reasons.push('The description reads as a consumer business, which the ICP disqualifies.');\n  }\n\n  const { companySize, count } = companySizeFromNotes(notes);\n  if (count !== null && count >= 10 && count <= 250) {\n    score += 10;\n    reasons.push('The stated team size sits inside the ICP range of about 10 to 250 people.');\n  } else if (count !== null && count > 250) {\n    score -= 18;\n    reasons.push('The stated team size is above the ICP range.');\n  } else if (count !== null) {\n    score -= 12;\n    reasons.push('The stated team size is below the ICP range.');\n  }\n\n  if (!websiteText) {\n    score -= 4;\n    reasons.push('The company website could not be read, so this score uses the lead notes only.');\n  }\n\n  score = Math.max(0, Math.min(100, Math.round(score)));\n  const tier = expectedTier(score, icp);\n  const trimmed = reasons.slice(0, 4);\n  while (trimmed.length < 2) trimmed.push('Fit is based on the text provided with the lead.');\n\n  const summary = websiteText\n    ? `${lead.company} was reviewed from the submitted notes and a short extract of the company website. This mock score is a stand-in for Claude when no API key is configured.`\n    : `${lead.company} was reviewed from the submitted notes only, because the website text was empty. This mock score is a stand-in for Claude when no API key is configured.`;\n\n  return {\n    summary,\n    industry: 'unknown',\n    companySize,\n    score,\n    tier,\n    reasons: trimmed,\n    suggestedFirstLine: `I read the note on ${lead.company} and would like to confirm whether the handoff you described is still the one to fix first.`,\n  };\n}\n\nfunction mockQualify({ lead, websiteText, icp, attempt, force }) {\n  if (force === 'malformed' || (force === 'once' && attempt === 1)) {\n    return { rawText: 'I could not decide. Please try again later.' };\n  }\n  const email = String(lead?.email || '').toLowerCase();\n  const qualification = FIXTURES[email] || scoreUnknownLead(lead, websiteText, icp);\n  return { rawText: JSON.stringify(qualification) };\n}\n\n\nconst state = $('Prepare qualification').first().json;\nconst result = mockQualify({\n  lead: state.lead,\n  websiteText: state.website.excerpt || '',\n  icp: state.config.icp,\n  attempt: 1,\n  force: state.force || null,\n});\n\nreturn [\n  {\n    json: {\n      ...state,\n      attempts: 1,\n      rawModelText: result.rawText,\n      qualification: null,\n      jsonValid: false,\n    },\n  },\n];"
+      },
+      "notes": "Demo mode. Sample emails return pinned qualifications so the walkthrough matches samples/outputs. Any other email uses the heuristic in scripts/lib/qualify.mjs. Live mode does not use this node.",
+      "notesInFlow": true
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000018",
+      "name": "Validate attempt 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const COMPANY_SIZES = ['1-9', '10-49', '50-249', '250-999', '1000+', 'unknown'];\n\nconst FIXTURES = {\n  'mara.ellison@northwind.example': {\n    summary:\n      'Northwind Provisions supplies independent cafes and shops on a wholesale basis. Orders still arrive by email and are retyped into the CRM, which is the kind of handoff this offer is built for.',\n    industry: 'Wholesale food supply',\n    companySize: '10-49',\n    score: 86,\n    tier: 'hot',\n    reasons: [\n      'The notes name a founder and a team of about 40 people, inside the ICP size range.',\n      'Retyping emailed orders into a CRM is a concrete repetitive handoff.',\n      'The company sells to other businesses rather than to consumers.',\n    ],\n    suggestedFirstLine:\n      'The emailed orders you still retype into the CRM are a small, well bounded automation, and I would like to show you how I would connect that inbox to HubSpot.',\n  },\n  'jonas.pell@lumenfield.example': {\n    summary:\n      'Lumen Field Services sends technicians to facilities clients and keeps job sheets in spreadsheets plus a separate scheduling tool. Invoicing is still manual, though some automations already exist.',\n    industry: 'Field services',\n    companySize: '10-49',\n    score: 64,\n    tier: 'warm',\n    reasons: [\n      'An operations manager is named, with 18 technicians, which sits in the ICP size range.',\n      'Job sheets and invoicing still cross a spreadsheet and a scheduling tool.',\n      'Some automations already exist, so the remaining gap needs a look before a strong fit is claimed.',\n    ],\n    suggestedFirstLine:\n      'You already have a few automations in place, and the manual step from job sheet to invoice looks like the next one worth mapping.',\n  },\n  'priya.shah@paperkite.example': {\n    summary:\n      'Paper Kite Studio is a two-person illustration practice selling prints to consumers. The request is for a contact form, with no CRM and no operational handoff described.',\n    industry: 'Consumer retail',\n    companySize: '1-9',\n    score: 28,\n    tier: 'cold',\n    reasons: [\n      'The studio sells prints to consumers, which the ICP treats as a poor fit.',\n      'A team of two is below the 10 to 250 people range.',\n      'The request is a contact form, not a repetitive handoff between systems.',\n    ],\n    suggestedFirstLine:\n      'I mostly help B2B teams join up tools they already use, so I am probably not the right fit for a consumer print shop, but I am happy to point you at a simpler form setup.',\n  },\n  'helen.okonkwo@harbourlane.example': {\n    summary:\n      'Harbour Lane Analytics sells analytics to other businesses and has about 80 people. The operations lead wants HubSpot and billing to share account status, replacing a weekly export that is pasted into a sheet.',\n    industry: 'B2B analytics',\n    companySize: '50-249',\n    score: 81,\n    tier: 'hot',\n    reasons: [\n      'A head of ops is the buyer, at a B2B company of about 80 people.',\n      'HubSpot and the billing tool are out of sync, and someone pastes a weekly export into a sheet.',\n      'The notes mention webhooks, so there is a clear technical path for a first engagement.',\n    ],\n    suggestedFirstLine:\n      'The weekly paste from billing into a sheet, while HubSpot holds the account status, is a webhook job I would scope as a short first engagement.',\n  },\n};\n\nfunction expectedTier(score, icp) {\n  if (score >= icp.tiers.hot.minScore) return 'hot';\n  if (score >= icp.tiers.warm.minScore) return 'warm';\n  return 'cold';\n}\n\nfunction parseModelText(rawText) {\n  if (typeof rawText !== 'string' || rawText.trim() === '') {\n    return { ok: false, errors: ['model output was empty'], value: null };\n  }\n  let text = rawText.trim();\n  const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/i);\n  if (fenced) text = fenced[1].trim();\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n  if (start === -1 || end <= start) {\n    return { ok: false, errors: ['no JSON object in the model output'], value: null };\n  }\n  try {\n    return { ok: true, errors: [], value: JSON.parse(text.slice(start, end + 1)) };\n  } catch (error) {\n    return { ok: false, errors: [`JSON.parse failed: ${error.message}`], value: null };\n  }\n}\n\nfunction validateQualification(qualification, icp) {\n  const errors = [];\n  if (!qualification || typeof qualification !== 'object' || Array.isArray(qualification)) {\n    return ['qualification must be a JSON object'];\n  }\n  const allowed = [\n    'summary',\n    'industry',\n    'companySize',\n    'score',\n    'tier',\n    'reasons',\n    'suggestedFirstLine',\n  ];\n  for (const key of Object.keys(qualification)) {\n    if (!allowed.includes(key)) errors.push(`unexpected key: ${key}`);\n  }\n  for (const key of ['summary', 'industry', 'suggestedFirstLine']) {\n    if (typeof qualification[key] !== 'string' || qualification[key].trim() === '') {\n      errors.push(`${key} must be a non-empty string`);\n    }\n  }\n  if (typeof qualification.summary === 'string' && qualification.summary.length > 800) {\n    errors.push('summary is longer than 800 characters');\n  }\n  if (\n    typeof qualification.suggestedFirstLine === 'string' &&\n    qualification.suggestedFirstLine.length > 500\n  ) {\n    errors.push('suggestedFirstLine is longer than 500 characters');\n  }\n  if (!COMPANY_SIZES.includes(qualification.companySize)) {\n    errors.push('companySize is not an allowed value');\n  }\n  if (!Number.isInteger(qualification.score) || qualification.score < 0 || qualification.score > 100) {\n    errors.push('score must be an integer from 0 to 100');\n  }\n  if (!['hot', 'warm', 'cold'].includes(qualification.tier)) {\n    errors.push('tier must be hot, warm, or cold');\n  } else if (Number.isInteger(qualification.score) && qualification.tier !== expectedTier(qualification.score, icp)) {\n    errors.push('tier does not match the score and the ICP thresholds');\n  }\n  if (\n    !Array.isArray(qualification.reasons) ||\n    qualification.reasons.length < 2 ||\n    qualification.reasons.length > 4 ||\n    qualification.reasons.some((reason) => typeof reason !== 'string' || reason.trim() === '')\n  ) {\n    errors.push('reasons must be 2 to 4 non-empty strings');\n  }\n  return errors;\n}\n\nfunction companySizeFromNotes(notes) {\n  const sizeMatch = String(notes).match(/\\b(\\d+)\\s*(people|staff|employees|technicians)\\b/i);\n  if (!sizeMatch) return { companySize: 'unknown', count: null };\n  const count = Number(sizeMatch[1]);\n  let companySize = '1000+';\n  if (count < 10) companySize = '1-9';\n  else if (count < 50) companySize = '10-49';\n  else if (count < 250) companySize = '50-249';\n  else if (count < 1000) companySize = '250-999';\n  return { companySize, count };\n}\n\nfunction scoreUnknownLead(lead, websiteText, icp) {\n  const notes = `${lead.notes || ''} ${lead.company || ''}`;\n  let score = 38;\n  const reasons = [];\n\n  if (/\\b(b2b|wholesale|clients|customers|teams)\\b/i.test(notes)) {\n    score += 14;\n    reasons.push('The notes describe a business that sells to other organisations.');\n  } else {\n    score -= 6;\n    reasons.push('The notes do not clearly show a B2B buyer.');\n  }\n\n  if (/\\b(manual|spreadsheet|retype|re-type|webhook|crm|hubspot|by hand|paste)\\b/i.test(notes)) {\n    score += 18;\n    reasons.push('The notes name a repetitive handoff between tools.');\n  } else {\n    score -= 8;\n    reasons.push('No concrete operational handoff is described.');\n  }\n\n  if (/\\b(consumer|d2c|etsy|prints|shoppers)\\b/i.test(notes)) {\n    score -= 24;\n    reasons.push('The description reads as a consumer business, which the ICP disqualifies.');\n  }\n\n  const { companySize, count } = companySizeFromNotes(notes);\n  if (count !== null && count >= 10 && count <= 250) {\n    score += 10;\n    reasons.push('The stated team size sits inside the ICP range of about 10 to 250 people.');\n  } else if (count !== null && count > 250) {\n    score -= 18;\n    reasons.push('The stated team size is above the ICP range.');\n  } else if (count !== null) {\n    score -= 12;\n    reasons.push('The stated team size is below the ICP range.');\n  }\n\n  if (!websiteText) {\n    score -= 4;\n    reasons.push('The company website could not be read, so this score uses the lead notes only.');\n  }\n\n  score = Math.max(0, Math.min(100, Math.round(score)));\n  const tier = expectedTier(score, icp);\n  const trimmed = reasons.slice(0, 4);\n  while (trimmed.length < 2) trimmed.push('Fit is based on the text provided with the lead.');\n\n  const summary = websiteText\n    ? `${lead.company} was reviewed from the submitted notes and a short extract of the company website. This mock score is a stand-in for Claude when no API key is configured.`\n    : `${lead.company} was reviewed from the submitted notes only, because the website text was empty. This mock score is a stand-in for Claude when no API key is configured.`;\n\n  return {\n    summary,\n    industry: 'unknown',\n    companySize,\n    score,\n    tier,\n    reasons: trimmed,\n    suggestedFirstLine: `I read the note on ${lead.company} and would like to confirm whether the handoff you described is still the one to fix first.`,\n  };\n}\n\nfunction mockQualify({ lead, websiteText, icp, attempt, force }) {\n  if (force === 'malformed' || (force === 'once' && attempt === 1)) {\n    return { rawText: 'I could not decide. Please try again later.' };\n  }\n  const email = String(lead?.email || '').toLowerCase();\n  const qualification = FIXTURES[email] || scoreUnknownLead(lead, websiteText, icp);\n  return { rawText: JSON.stringify(qualification) };\n}\n\n\nconst input = $input.first().json;\nlet state;\nlet raw;\n\nif (input && input.lead && input.config && typeof input.rawModelText === 'string') {\n  state = input;\n  raw = input.rawModelText;\n} else {\n  state = { ...$('Prepare qualification').first().json, attempts: 1 };\n  const body = input && input.body && typeof input.body === 'object' ? input.body : input;\n  if (body && Array.isArray(body.content)) {\n    raw = body.content\n      .filter((block) => block && block.type === 'text')\n      .map((block) => block.text || '')\n      .join('\\n');\n  } else if (typeof input.data === 'string') {\n    raw = input.data;\n  } else {\n    raw = typeof body === 'string' ? body : JSON.stringify(body ?? '');\n  }\n}\n\nconst parsed = parseModelText(raw);\nconst errors = parsed.ok ? validateQualification(parsed.value, state.config.icp) : parsed.errors;\n\nreturn [\n  {\n    json: {\n      ...state,\n      rawModelText: raw,\n      attempts: state.attempts || 1,\n      validationErrorsModel: errors,\n      jsonValid: errors.length === 0,\n      qualification: errors.length === 0 ? parsed.value : null,\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000019",
+      "name": "JSON valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3800,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-valid-1",
+              "leftValue": "={{ $json.jsonValid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000020",
+      "name": "Use live Claude on retry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4080,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "claude-mode-retry",
+              "leftValue": "={{ $json.config.claudeMode }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000021",
+      "name": "Build retry request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4360,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const previous = $('Validate attempt 1').first().json;\nconst user = [\n  previous.prompt.user,\n  '',\n  'Your previous output failed validation:',\n  (previous.validationErrorsModel || []).join('\\n') || 'unknown validation error',\n  '',\n  'Previous output:',\n  String(previous.rawModelText || '').slice(0, 2000),\n  '',\n  'Return only the JSON object.',\n].join('\\n');\n\nreturn [\n  {\n    json: {\n      ...previous,\n      prompt: { ...previous.prompt, user },\n      claudeRequest: {\n        ...previous.claudeRequest,\n        messages: [{ role: 'user', content: user }],\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000022",
+      "name": "Claude attempt 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4640,
+        240
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.claudeRequest) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_ANTHROPIC_HEADER_AUTH_ID",
+          "name": "Anthropic x-api-key (placeholder)"
+        }
+      },
+      "notes": "Placeholder credential only. Create a Header Auth credential with name x-api-key and your Anthropic key, then select it here. This node does not run when CLAUDE_MODE is mock."
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000023",
+      "name": "Mock attempt 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4640,
+        600
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const COMPANY_SIZES = ['1-9', '10-49', '50-249', '250-999', '1000+', 'unknown'];\n\nconst FIXTURES = {\n  'mara.ellison@northwind.example': {\n    summary:\n      'Northwind Provisions supplies independent cafes and shops on a wholesale basis. Orders still arrive by email and are retyped into the CRM, which is the kind of handoff this offer is built for.',\n    industry: 'Wholesale food supply',\n    companySize: '10-49',\n    score: 86,\n    tier: 'hot',\n    reasons: [\n      'The notes name a founder and a team of about 40 people, inside the ICP size range.',\n      'Retyping emailed orders into a CRM is a concrete repetitive handoff.',\n      'The company sells to other businesses rather than to consumers.',\n    ],\n    suggestedFirstLine:\n      'The emailed orders you still retype into the CRM are a small, well bounded automation, and I would like to show you how I would connect that inbox to HubSpot.',\n  },\n  'jonas.pell@lumenfield.example': {\n    summary:\n      'Lumen Field Services sends technicians to facilities clients and keeps job sheets in spreadsheets plus a separate scheduling tool. Invoicing is still manual, though some automations already exist.',\n    industry: 'Field services',\n    companySize: '10-49',\n    score: 64,\n    tier: 'warm',\n    reasons: [\n      'An operations manager is named, with 18 technicians, which sits in the ICP size range.',\n      'Job sheets and invoicing still cross a spreadsheet and a scheduling tool.',\n      'Some automations already exist, so the remaining gap needs a look before a strong fit is claimed.',\n    ],\n    suggestedFirstLine:\n      'You already have a few automations in place, and the manual step from job sheet to invoice looks like the next one worth mapping.',\n  },\n  'priya.shah@paperkite.example': {\n    summary:\n      'Paper Kite Studio is a two-person illustration practice selling prints to consumers. The request is for a contact form, with no CRM and no operational handoff described.',\n    industry: 'Consumer retail',\n    companySize: '1-9',\n    score: 28,\n    tier: 'cold',\n    reasons: [\n      'The studio sells prints to consumers, which the ICP treats as a poor fit.',\n      'A team of two is below the 10 to 250 people range.',\n      'The request is a contact form, not a repetitive handoff between systems.',\n    ],\n    suggestedFirstLine:\n      'I mostly help B2B teams join up tools they already use, so I am probably not the right fit for a consumer print shop, but I am happy to point you at a simpler form setup.',\n  },\n  'helen.okonkwo@harbourlane.example': {\n    summary:\n      'Harbour Lane Analytics sells analytics to other businesses and has about 80 people. The operations lead wants HubSpot and billing to share account status, replacing a weekly export that is pasted into a sheet.',\n    industry: 'B2B analytics',\n    companySize: '50-249',\n    score: 81,\n    tier: 'hot',\n    reasons: [\n      'A head of ops is the buyer, at a B2B company of about 80 people.',\n      'HubSpot and the billing tool are out of sync, and someone pastes a weekly export into a sheet.',\n      'The notes mention webhooks, so there is a clear technical path for a first engagement.',\n    ],\n    suggestedFirstLine:\n      'The weekly paste from billing into a sheet, while HubSpot holds the account status, is a webhook job I would scope as a short first engagement.',\n  },\n};\n\nfunction expectedTier(score, icp) {\n  if (score >= icp.tiers.hot.minScore) return 'hot';\n  if (score >= icp.tiers.warm.minScore) return 'warm';\n  return 'cold';\n}\n\nfunction parseModelText(rawText) {\n  if (typeof rawText !== 'string' || rawText.trim() === '') {\n    return { ok: false, errors: ['model output was empty'], value: null };\n  }\n  let text = rawText.trim();\n  const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/i);\n  if (fenced) text = fenced[1].trim();\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n  if (start === -1 || end <= start) {\n    return { ok: false, errors: ['no JSON object in the model output'], value: null };\n  }\n  try {\n    return { ok: true, errors: [], value: JSON.parse(text.slice(start, end + 1)) };\n  } catch (error) {\n    return { ok: false, errors: [`JSON.parse failed: ${error.message}`], value: null };\n  }\n}\n\nfunction validateQualification(qualification, icp) {\n  const errors = [];\n  if (!qualification || typeof qualification !== 'object' || Array.isArray(qualification)) {\n    return ['qualification must be a JSON object'];\n  }\n  const allowed = [\n    'summary',\n    'industry',\n    'companySize',\n    'score',\n    'tier',\n    'reasons',\n    'suggestedFirstLine',\n  ];\n  for (const key of Object.keys(qualification)) {\n    if (!allowed.includes(key)) errors.push(`unexpected key: ${key}`);\n  }\n  for (const key of ['summary', 'industry', 'suggestedFirstLine']) {\n    if (typeof qualification[key] !== 'string' || qualification[key].trim() === '') {\n      errors.push(`${key} must be a non-empty string`);\n    }\n  }\n  if (typeof qualification.summary === 'string' && qualification.summary.length > 800) {\n    errors.push('summary is longer than 800 characters');\n  }\n  if (\n    typeof qualification.suggestedFirstLine === 'string' &&\n    qualification.suggestedFirstLine.length > 500\n  ) {\n    errors.push('suggestedFirstLine is longer than 500 characters');\n  }\n  if (!COMPANY_SIZES.includes(qualification.companySize)) {\n    errors.push('companySize is not an allowed value');\n  }\n  if (!Number.isInteger(qualification.score) || qualification.score < 0 || qualification.score > 100) {\n    errors.push('score must be an integer from 0 to 100');\n  }\n  if (!['hot', 'warm', 'cold'].includes(qualification.tier)) {\n    errors.push('tier must be hot, warm, or cold');\n  } else if (Number.isInteger(qualification.score) && qualification.tier !== expectedTier(qualification.score, icp)) {\n    errors.push('tier does not match the score and the ICP thresholds');\n  }\n  if (\n    !Array.isArray(qualification.reasons) ||\n    qualification.reasons.length < 2 ||\n    qualification.reasons.length > 4 ||\n    qualification.reasons.some((reason) => typeof reason !== 'string' || reason.trim() === '')\n  ) {\n    errors.push('reasons must be 2 to 4 non-empty strings');\n  }\n  return errors;\n}\n\nfunction companySizeFromNotes(notes) {\n  const sizeMatch = String(notes).match(/\\b(\\d+)\\s*(people|staff|employees|technicians)\\b/i);\n  if (!sizeMatch) return { companySize: 'unknown', count: null };\n  const count = Number(sizeMatch[1]);\n  let companySize = '1000+';\n  if (count < 10) companySize = '1-9';\n  else if (count < 50) companySize = '10-49';\n  else if (count < 250) companySize = '50-249';\n  else if (count < 1000) companySize = '250-999';\n  return { companySize, count };\n}\n\nfunction scoreUnknownLead(lead, websiteText, icp) {\n  const notes = `${lead.notes || ''} ${lead.company || ''}`;\n  let score = 38;\n  const reasons = [];\n\n  if (/\\b(b2b|wholesale|clients|customers|teams)\\b/i.test(notes)) {\n    score += 14;\n    reasons.push('The notes describe a business that sells to other organisations.');\n  } else {\n    score -= 6;\n    reasons.push('The notes do not clearly show a B2B buyer.');\n  }\n\n  if (/\\b(manual|spreadsheet|retype|re-type|webhook|crm|hubspot|by hand|paste)\\b/i.test(notes)) {\n    score += 18;\n    reasons.push('The notes name a repetitive handoff between tools.');\n  } else {\n    score -= 8;\n    reasons.push('No concrete operational handoff is described.');\n  }\n\n  if (/\\b(consumer|d2c|etsy|prints|shoppers)\\b/i.test(notes)) {\n    score -= 24;\n    reasons.push('The description reads as a consumer business, which the ICP disqualifies.');\n  }\n\n  const { companySize, count } = companySizeFromNotes(notes);\n  if (count !== null && count >= 10 && count <= 250) {\n    score += 10;\n    reasons.push('The stated team size sits inside the ICP range of about 10 to 250 people.');\n  } else if (count !== null && count > 250) {\n    score -= 18;\n    reasons.push('The stated team size is above the ICP range.');\n  } else if (count !== null) {\n    score -= 12;\n    reasons.push('The stated team size is below the ICP range.');\n  }\n\n  if (!websiteText) {\n    score -= 4;\n    reasons.push('The company website could not be read, so this score uses the lead notes only.');\n  }\n\n  score = Math.max(0, Math.min(100, Math.round(score)));\n  const tier = expectedTier(score, icp);\n  const trimmed = reasons.slice(0, 4);\n  while (trimmed.length < 2) trimmed.push('Fit is based on the text provided with the lead.');\n\n  const summary = websiteText\n    ? `${lead.company} was reviewed from the submitted notes and a short extract of the company website. This mock score is a stand-in for Claude when no API key is configured.`\n    : `${lead.company} was reviewed from the submitted notes only, because the website text was empty. This mock score is a stand-in for Claude when no API key is configured.`;\n\n  return {\n    summary,\n    industry: 'unknown',\n    companySize,\n    score,\n    tier,\n    reasons: trimmed,\n    suggestedFirstLine: `I read the note on ${lead.company} and would like to confirm whether the handoff you described is still the one to fix first.`,\n  };\n}\n\nfunction mockQualify({ lead, websiteText, icp, attempt, force }) {\n  if (force === 'malformed' || (force === 'once' && attempt === 1)) {\n    return { rawText: 'I could not decide. Please try again later.' };\n  }\n  const email = String(lead?.email || '').toLowerCase();\n  const qualification = FIXTURES[email] || scoreUnknownLead(lead, websiteText, icp);\n  return { rawText: JSON.stringify(qualification) };\n}\n\n\nconst state = $('Validate attempt 1').first().json;\nconst result = mockQualify({\n  lead: state.lead,\n  websiteText: state.website.excerpt || '',\n  icp: state.config.icp,\n  attempt: 2,\n  force: state.force || null,\n});\n\nreturn [\n  {\n    json: {\n      ...state,\n      attempts: 2,\n      rawModelText: result.rawText,\n      qualification: null,\n      jsonValid: false,\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000024",
+      "name": "Validate attempt 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4960,
+        480
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const COMPANY_SIZES = ['1-9', '10-49', '50-249', '250-999', '1000+', 'unknown'];\n\nconst FIXTURES = {\n  'mara.ellison@northwind.example': {\n    summary:\n      'Northwind Provisions supplies independent cafes and shops on a wholesale basis. Orders still arrive by email and are retyped into the CRM, which is the kind of handoff this offer is built for.',\n    industry: 'Wholesale food supply',\n    companySize: '10-49',\n    score: 86,\n    tier: 'hot',\n    reasons: [\n      'The notes name a founder and a team of about 40 people, inside the ICP size range.',\n      'Retyping emailed orders into a CRM is a concrete repetitive handoff.',\n      'The company sells to other businesses rather than to consumers.',\n    ],\n    suggestedFirstLine:\n      'The emailed orders you still retype into the CRM are a small, well bounded automation, and I would like to show you how I would connect that inbox to HubSpot.',\n  },\n  'jonas.pell@lumenfield.example': {\n    summary:\n      'Lumen Field Services sends technicians to facilities clients and keeps job sheets in spreadsheets plus a separate scheduling tool. Invoicing is still manual, though some automations already exist.',\n    industry: 'Field services',\n    companySize: '10-49',\n    score: 64,\n    tier: 'warm',\n    reasons: [\n      'An operations manager is named, with 18 technicians, which sits in the ICP size range.',\n      'Job sheets and invoicing still cross a spreadsheet and a scheduling tool.',\n      'Some automations already exist, so the remaining gap needs a look before a strong fit is claimed.',\n    ],\n    suggestedFirstLine:\n      'You already have a few automations in place, and the manual step from job sheet to invoice looks like the next one worth mapping.',\n  },\n  'priya.shah@paperkite.example': {\n    summary:\n      'Paper Kite Studio is a two-person illustration practice selling prints to consumers. The request is for a contact form, with no CRM and no operational handoff described.',\n    industry: 'Consumer retail',\n    companySize: '1-9',\n    score: 28,\n    tier: 'cold',\n    reasons: [\n      'The studio sells prints to consumers, which the ICP treats as a poor fit.',\n      'A team of two is below the 10 to 250 people range.',\n      'The request is a contact form, not a repetitive handoff between systems.',\n    ],\n    suggestedFirstLine:\n      'I mostly help B2B teams join up tools they already use, so I am probably not the right fit for a consumer print shop, but I am happy to point you at a simpler form setup.',\n  },\n  'helen.okonkwo@harbourlane.example': {\n    summary:\n      'Harbour Lane Analytics sells analytics to other businesses and has about 80 people. The operations lead wants HubSpot and billing to share account status, replacing a weekly export that is pasted into a sheet.',\n    industry: 'B2B analytics',\n    companySize: '50-249',\n    score: 81,\n    tier: 'hot',\n    reasons: [\n      'A head of ops is the buyer, at a B2B company of about 80 people.',\n      'HubSpot and the billing tool are out of sync, and someone pastes a weekly export into a sheet.',\n      'The notes mention webhooks, so there is a clear technical path for a first engagement.',\n    ],\n    suggestedFirstLine:\n      'The weekly paste from billing into a sheet, while HubSpot holds the account status, is a webhook job I would scope as a short first engagement.',\n  },\n};\n\nfunction expectedTier(score, icp) {\n  if (score >= icp.tiers.hot.minScore) return 'hot';\n  if (score >= icp.tiers.warm.minScore) return 'warm';\n  return 'cold';\n}\n\nfunction parseModelText(rawText) {\n  if (typeof rawText !== 'string' || rawText.trim() === '') {\n    return { ok: false, errors: ['model output was empty'], value: null };\n  }\n  let text = rawText.trim();\n  const fenced = text.match(/^```(?:json)?\\s*([\\s\\S]*?)\\s*```$/i);\n  if (fenced) text = fenced[1].trim();\n  const start = text.indexOf('{');\n  const end = text.lastIndexOf('}');\n  if (start === -1 || end <= start) {\n    return { ok: false, errors: ['no JSON object in the model output'], value: null };\n  }\n  try {\n    return { ok: true, errors: [], value: JSON.parse(text.slice(start, end + 1)) };\n  } catch (error) {\n    return { ok: false, errors: [`JSON.parse failed: ${error.message}`], value: null };\n  }\n}\n\nfunction validateQualification(qualification, icp) {\n  const errors = [];\n  if (!qualification || typeof qualification !== 'object' || Array.isArray(qualification)) {\n    return ['qualification must be a JSON object'];\n  }\n  const allowed = [\n    'summary',\n    'industry',\n    'companySize',\n    'score',\n    'tier',\n    'reasons',\n    'suggestedFirstLine',\n  ];\n  for (const key of Object.keys(qualification)) {\n    if (!allowed.includes(key)) errors.push(`unexpected key: ${key}`);\n  }\n  for (const key of ['summary', 'industry', 'suggestedFirstLine']) {\n    if (typeof qualification[key] !== 'string' || qualification[key].trim() === '') {\n      errors.push(`${key} must be a non-empty string`);\n    }\n  }\n  if (typeof qualification.summary === 'string' && qualification.summary.length > 800) {\n    errors.push('summary is longer than 800 characters');\n  }\n  if (\n    typeof qualification.suggestedFirstLine === 'string' &&\n    qualification.suggestedFirstLine.length > 500\n  ) {\n    errors.push('suggestedFirstLine is longer than 500 characters');\n  }\n  if (!COMPANY_SIZES.includes(qualification.companySize)) {\n    errors.push('companySize is not an allowed value');\n  }\n  if (!Number.isInteger(qualification.score) || qualification.score < 0 || qualification.score > 100) {\n    errors.push('score must be an integer from 0 to 100');\n  }\n  if (!['hot', 'warm', 'cold'].includes(qualification.tier)) {\n    errors.push('tier must be hot, warm, or cold');\n  } else if (Number.isInteger(qualification.score) && qualification.tier !== expectedTier(qualification.score, icp)) {\n    errors.push('tier does not match the score and the ICP thresholds');\n  }\n  if (\n    !Array.isArray(qualification.reasons) ||\n    qualification.reasons.length < 2 ||\n    qualification.reasons.length > 4 ||\n    qualification.reasons.some((reason) => typeof reason !== 'string' || reason.trim() === '')\n  ) {\n    errors.push('reasons must be 2 to 4 non-empty strings');\n  }\n  return errors;\n}\n\nfunction companySizeFromNotes(notes) {\n  const sizeMatch = String(notes).match(/\\b(\\d+)\\s*(people|staff|employees|technicians)\\b/i);\n  if (!sizeMatch) return { companySize: 'unknown', count: null };\n  const count = Number(sizeMatch[1]);\n  let companySize = '1000+';\n  if (count < 10) companySize = '1-9';\n  else if (count < 50) companySize = '10-49';\n  else if (count < 250) companySize = '50-249';\n  else if (count < 1000) companySize = '250-999';\n  return { companySize, count };\n}\n\nfunction scoreUnknownLead(lead, websiteText, icp) {\n  const notes = `${lead.notes || ''} ${lead.company || ''}`;\n  let score = 38;\n  const reasons = [];\n\n  if (/\\b(b2b|wholesale|clients|customers|teams)\\b/i.test(notes)) {\n    score += 14;\n    reasons.push('The notes describe a business that sells to other organisations.');\n  } else {\n    score -= 6;\n    reasons.push('The notes do not clearly show a B2B buyer.');\n  }\n\n  if (/\\b(manual|spreadsheet|retype|re-type|webhook|crm|hubspot|by hand|paste)\\b/i.test(notes)) {\n    score += 18;\n    reasons.push('The notes name a repetitive handoff between tools.');\n  } else {\n    score -= 8;\n    reasons.push('No concrete operational handoff is described.');\n  }\n\n  if (/\\b(consumer|d2c|etsy|prints|shoppers)\\b/i.test(notes)) {\n    score -= 24;\n    reasons.push('The description reads as a consumer business, which the ICP disqualifies.');\n  }\n\n  const { companySize, count } = companySizeFromNotes(notes);\n  if (count !== null && count >= 10 && count <= 250) {\n    score += 10;\n    reasons.push('The stated team size sits inside the ICP range of about 10 to 250 people.');\n  } else if (count !== null && count > 250) {\n    score -= 18;\n    reasons.push('The stated team size is above the ICP range.');\n  } else if (count !== null) {\n    score -= 12;\n    reasons.push('The stated team size is below the ICP range.');\n  }\n\n  if (!websiteText) {\n    score -= 4;\n    reasons.push('The company website could not be read, so this score uses the lead notes only.');\n  }\n\n  score = Math.max(0, Math.min(100, Math.round(score)));\n  const tier = expectedTier(score, icp);\n  const trimmed = reasons.slice(0, 4);\n  while (trimmed.length < 2) trimmed.push('Fit is based on the text provided with the lead.');\n\n  const summary = websiteText\n    ? `${lead.company} was reviewed from the submitted notes and a short extract of the company website. This mock score is a stand-in for Claude when no API key is configured.`\n    : `${lead.company} was reviewed from the submitted notes only, because the website text was empty. This mock score is a stand-in for Claude when no API key is configured.`;\n\n  return {\n    summary,\n    industry: 'unknown',\n    companySize,\n    score,\n    tier,\n    reasons: trimmed,\n    suggestedFirstLine: `I read the note on ${lead.company} and would like to confirm whether the handoff you described is still the one to fix first.`,\n  };\n}\n\nfunction mockQualify({ lead, websiteText, icp, attempt, force }) {\n  if (force === 'malformed' || (force === 'once' && attempt === 1)) {\n    return { rawText: 'I could not decide. Please try again later.' };\n  }\n  const email = String(lead?.email || '').toLowerCase();\n  const qualification = FIXTURES[email] || scoreUnknownLead(lead, websiteText, icp);\n  return { rawText: JSON.stringify(qualification) };\n}\n\n\nconst input = $input.first().json;\nlet state;\nlet raw;\n\nif (input && input.lead && input.config && typeof input.rawModelText === 'string') {\n  state = input;\n  raw = input.rawModelText;\n} else {\n  state = { ...$('Build retry request').first().json, attempts: 2 };\n  const body = input && input.body && typeof input.body === 'object' ? input.body : input;\n  if (body && Array.isArray(body.content)) {\n    raw = body.content\n      .filter((block) => block && block.type === 'text')\n      .map((block) => block.text || '')\n      .join('\\n');\n  } else if (typeof input.data === 'string') {\n    raw = input.data;\n  } else {\n    raw = typeof body === 'string' ? body : JSON.stringify(body ?? '');\n  }\n}\n\nconst parsed = parseModelText(raw);\nconst errors = parsed.ok ? validateQualification(parsed.value, state.config.icp) : parsed.errors;\n\nreturn [\n  {\n    json: {\n      ...state,\n      rawModelText: raw,\n      attempts: state.attempts || 2,\n      validationErrorsModel: errors,\n      jsonValid: errors.length === 0,\n      qualification: errors.length === 0 ? parsed.value : null,\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000025",
+      "name": "JSON valid after retry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5240,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-valid-2",
+              "leftValue": "={{ $json.jsonValid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000026",
+      "name": "Shape model error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5520,
+        680
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function pushError(entry) {\n  const store = $getWorkflowStaticData('global');\n  if (!Array.isArray(store.errorLog)) store.errorLog = [];\n  store.errorLog.push({ at: new Date().toISOString(), ...entry });\n  if (store.errorLog.length > 50) store.errorLog.splice(0, store.errorLog.length - 50);\n}\n\n\nconst state = $input.first().json;\nconst messages =\n  state.validationErrorsModel && state.validationErrorsModel.length\n    ? state.validationErrorsModel\n    : ['Model output was not valid JSON.'];\n\npushError({\n  kind: 'model_output_invalid',\n  email: state.lead ? state.lead.email : null,\n  message: messages.join('; ').slice(0, 500),\n});\n\nreturn [\n  {\n    json: {\n      ok: false,\n      error: 'model_output_invalid',\n      messages,\n      attempts: state.attempts || 2,\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000027",
+      "name": "Shape unknown tier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5520,
+        880
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function pushError(entry) {\n  const store = $getWorkflowStaticData('global');\n  if (!Array.isArray(store.errorLog)) store.errorLog = [];\n  store.errorLog.push({ at: new Date().toISOString(), ...entry });\n  if (store.errorLog.length > 50) store.errorLog.splice(0, store.errorLog.length - 50);\n}\n\n\nconst state = $input.first().json;\npushError({\n  kind: 'tier_unroutable',\n  email: state.lead ? state.lead.email : null,\n  message: 'The qualification tier was not hot, warm, or cold.',\n});\n\nreturn [\n  {\n    json: {\n      ok: false,\n      error: 'tier_unroutable',\n      messages: ['The qualification tier was not hot, warm, or cold.'],\n      attempts: state.attempts || null,\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000028",
+      "name": "Respond 422",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        5800,
+        760
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000029",
+      "name": "Shape upstream error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        720
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function pushError(entry) {\n  const store = $getWorkflowStaticData('global');\n  if (!Array.isArray(store.errorLog)) store.errorLog = [];\n  store.errorLog.push({ at: new Date().toISOString(), ...entry });\n  if (store.errorLog.length > 50) store.errorLog.splice(0, store.errorLog.length - 50);\n}\n\n\nconst errorItem = $input.first().json;\nconst raw = errorItem.error || errorItem;\nconst message = (raw && (raw.message || raw.description)) || 'Claude request failed.';\nlet email = null;\ntry {\n  email = $('Prepare qualification').first().json.lead.email;\n} catch (error) {\n  email = null;\n}\n\npushError({\n  kind: 'claude_request_failed',\n  email,\n  message: String(message).slice(0, 500),\n});\n\nreturn [\n  {\n    json: {\n      ok: false,\n      error: 'claude_request_failed',\n      messages: [typeof message === 'string' ? message : JSON.stringify(message)],\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000030",
+      "name": "Respond 502",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        3800,
+        720
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 502
+        }
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000031",
+      "name": "Carry result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4360,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: $input.first().json }];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000032",
+      "name": "Route by tier",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        4640,
+        80
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "tier-hot",
+                    "leftValue": "={{ $json.qualification.tier }}",
+                    "rightValue": "hot",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "hot"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "tier-warm",
+                    "leftValue": "={{ $json.qualification.tier }}",
+                    "rightValue": "warm",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "warm"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "tier-cold",
+                    "leftValue": "={{ $json.qualification.tier }}",
+                    "rightValue": "cold",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cold"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Other"
+        }
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000033",
+      "name": "Use HubSpot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4920,
+        -40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "crm-mode",
+              "leftValue": "={{ $json.config.crmMode }}",
+              "rightValue": "hubspot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000034",
+      "name": "Upsert HubSpot contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        5200,
+        -180
+      ],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "contact",
+        "operation": "upsert",
+        "email": "={{ $json.lead.email }}",
+        "additionalFields": {
+          "firstName": "={{ $json.lead.firstName }}",
+          "lastName": "={{ $json.lead.lastName }}",
+          "companyName": "={{ $json.lead.company }}",
+          "websiteUrl": "={{ $json.lead.website }}"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "REPLACE_WITH_HUBSPOT_APP_TOKEN_ID",
+          "name": "HubSpot app token (placeholder)"
+        }
+      },
+      "notes": "Placeholder app token. Reached only when CRM_MODE=hubspot. No HubSpot account: keep the CRM stub, or replace this node with Google Sheets Append (email, name, company, score, tier, summary, suggestedFirstLine).",
+      "notesInFlow": true
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000035",
+      "name": "Note HubSpot result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5480,
+        -260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $('Carry result').first().json;\nconst hubspot = $input.first().json;\nconst id = hubspot.id || hubspot.vid || hubspot.canonicalVid || null;\n\nreturn [\n  {\n    json: {\n      ...state,\n      routing: {\n        tier: state.qualification.tier,\n        action: 'crm_upsert',\n        crm: { provider: 'hubspot', action: 'upserted', id },\n        notification: 'disabled',\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000036",
+      "name": "Note HubSpot failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5480,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function pushError(entry) {\n  const store = $getWorkflowStaticData('global');\n  if (!Array.isArray(store.errorLog)) store.errorLog = [];\n  store.errorLog.push({ at: new Date().toISOString(), ...entry });\n  if (store.errorLog.length > 50) store.errorLog.splice(0, store.errorLog.length - 50);\n}\n\n\nconst state = $('Carry result').first().json;\nconst errorItem = $input.first().json;\nconst raw = errorItem.error || errorItem;\nconst message = (raw && (raw.message || raw.description)) || 'HubSpot request failed.';\n\npushError({\n  kind: 'hubspot',\n  email: state.lead.email,\n  message: String(message).slice(0, 500),\n});\n\nreturn [\n  {\n    json: {\n      ...state,\n      routing: {\n        tier: state.qualification.tier,\n        action: 'crm_upsert',\n        crm: {\n          provider: 'hubspot',\n          action: 'failed',\n          id: null,\n          error: typeof message === 'string' ? message : JSON.stringify(message),\n        },\n        notification: 'disabled',\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000037",
+      "name": "CRM stub",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5200,
+        80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $input.first().json;\nconst id = `stub_${state.lead.email.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`;\n\nreturn [\n  {\n    json: {\n      ...state,\n      routing: {\n        tier: state.qualification.tier,\n        action: 'crm_upsert',\n        crm: { provider: 'stub', action: 'upserted', id },\n        notification: 'disabled',\n      },\n    },\n  },\n];"
+      },
+      "notes": "Default CRM. Writes a stable stub id into the webhook response and the local store. A sheet row with the same fields is the documented swap."
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000038",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        5760,
+        -180
+      ],
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#leads"
+        },
+        "messageType": "text",
+        "text": "={{ 'Hot lead: ' + $json.lead.company + ' (' + $json.lead.email + '), score ' + $json.qualification.score + ', tier ' + $json.qualification.tier + '.' }}"
+      },
+      "disabled": true,
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_SLACK_CREDENTIAL_ID",
+          "name": "Slack bot token (placeholder)"
+        }
+      },
+      "notes": "Disabled by default. Enable after you attach a Slack access token and confirm the channel. Swap this node for Gmail or Send Email if you would rather be emailed.",
+      "notesInFlow": true
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000039",
+      "name": "Mark not pushed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4920,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const state = $input.first().json;\nconst tier = state.qualification.tier;\n\nreturn [\n  {\n    json: {\n      ...state,\n      routing: {\n        tier,\n        action: tier === 'warm' ? 'review' : 'log_only',\n        crm: { provider: 'none', action: 'skipped' },\n        notification: 'not_sent',\n      },\n    },\n  },\n];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000040",
+      "name": "Log lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6040,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function publicLead(lead) {\n  return {\n    name: lead.name,\n    email: lead.email,\n    company: lead.company,\n    website: lead.website,\n    linkedinUrl: lead.linkedinUrl || null,\n    notes: lead.notes || '',\n  };\n}\n\nfunction publicWebsite(website) {\n  const source = website || {};\n  return {\n    fetched: Boolean(source.fetched),\n    statusCode: source.statusCode || null,\n    excerpt: String(source.excerpt || '').slice(0, 280),\n    error: source.error || null,\n  };\n}\n\nfunction publicModel(state) {\n  return {\n    mode: state.config.claudeMode,\n    name: state.config.claudeModel,\n    attempts: state.attempts,\n    envAccess: Boolean(state.config.envAccess),\n  };\n}\n\n\nconst state = $input.first().json;\nconst store = $getWorkflowStaticData('global');\nif (!store.leads) store.leads = {};\n\nconst response = {\n  ok: true,\n  duplicate: false,\n  lead: publicLead(state.lead),\n  website: publicWebsite(state.website),\n  qualification: state.qualification,\n  routing: state.routing,\n  model: publicModel(state),\n};\n\nstore.leads[state.lead.email] = {\n  lead: response.lead,\n  website: response.website,\n  qualification: response.qualification,\n  routing: response.routing,\n  model: response.model,\n  storedAt: new Date().toISOString(),\n};\n\nconsole.log(`Logged ${response.lead.email} as ${response.qualification.tier} (${response.qualification.score})`);\n\nreturn [{ json: response }];"
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000041",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        6320,
+        160
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000042",
+      "name": "Sticky: store",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        -40
+      ],
+      "parameters": {
+        "content": "## Deduplicate\n\nWorkflow static data, one row per email, on this n8n instance only.\n\nSwap for a Data table named `leads` (Row, If row exists, match email) or a Google Sheet lookup.\n\nHeader `x-reset-store: true` clears the store only while Claude mode is mock.",
+        "height": 250,
+        "width": 380,
+        "color": 5
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000043",
+      "name": "Sticky: claude",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2600,
+        -40
+      ],
+      "parameters": {
+        "content": "## Claude\n\nLive mode calls the Messages API. The model id comes from `CLAUDE_MODEL` (default `claude-sonnet-5-5`).\n\nThe system prompt and ICP are copied from `prompts/` when you run `node scripts/build-workflow.mjs`.\n\nJSON is validated against the ICP thresholds. One retry, then a 422 response. Website failures still continue, with empty text.",
+        "height": 280,
+        "width": 420,
+        "color": 6
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000044",
+      "name": "Sticky: route",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4560,
+        -360
+      ],
+      "parameters": {
+        "content": "## Route by tier\n\nHot leads go to HubSpot or the CRM stub, then the disabled Slack node.\n\nWarm leads are logged for review and are not pushed to the CRM.\n\nCold leads are logged only.\n\nTo notify on hot leads, enable Slack or replace it with an email node.",
+        "height": 250,
+        "width": 400,
+        "color": 3
+      }
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-000000000045",
+      "name": "Sticky: errors",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3480,
+        560
+      ],
+      "parameters": {
+        "content": "## Errors\n\nClaude HTTP failures answer the webhook with 502. Invalid JSON answers 422. Bad input answers 400.\n\nThe last 50 error notes sit in this workflow's static data under `errorLog`.\n\nAlso import `workflows/error-handler.json` and select it as the error workflow in the workflow settings. That catches a crash this branch does not handle.",
+        "height": 260,
+        "width": 420,
+        "color": 2
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load config": {
+      "main": [
+        [
+          {
+            "node": "Normalise lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise lead": {
+      "main": [
+        [
+          {
+            "node": "Input valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input valid?": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape invalid input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape invalid input": {
+      "main": [
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate": {
+      "main": [
+        [
+          {
+            "node": "Already seen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already seen?": {
+      "main": [
+        [
+          {
+            "node": "Shape duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape duplicate": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch website": {
+      "main": [
+        [
+          {
+            "node": "Extract website text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Website fetch failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract website text": {
+      "main": [
+        [
+          {
+            "node": "Prepare qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Website fetch failed": {
+      "main": [
+        [
+          {
+            "node": "Prepare qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare qualification": {
+      "main": [
+        [
+          {
+            "node": "Use live Claude?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use live Claude?": {
+      "main": [
+        [
+          {
+            "node": "Claude attempt 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mock attempt 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude attempt 1": {
+      "main": [
+        [
+          {
+            "node": "Validate attempt 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape upstream error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock attempt 1": {
+      "main": [
+        [
+          {
+            "node": "Validate attempt 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate attempt 1": {
+      "main": [
+        [
+          {
+            "node": "JSON valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON valid?": {
+      "main": [
+        [
+          {
+            "node": "Carry result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Use live Claude on retry?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use live Claude on retry?": {
+      "main": [
+        [
+          {
+            "node": "Build retry request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mock attempt 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build retry request": {
+      "main": [
+        [
+          {
+            "node": "Claude attempt 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude attempt 2": {
+      "main": [
+        [
+          {
+            "node": "Validate attempt 2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape upstream error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock attempt 2": {
+      "main": [
+        [
+          {
+            "node": "Validate attempt 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate attempt 2": {
+      "main": [
+        [
+          {
+            "node": "JSON valid after retry?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON valid after retry?": {
+      "main": [
+        [
+          {
+            "node": "Carry result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape model error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape model error": {
+      "main": [
+        [
+          {
+            "node": "Respond 422",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape unknown tier": {
+      "main": [
+        [
+          {
+            "node": "Respond 422",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape upstream error": {
+      "main": [
+        [
+          {
+            "node": "Respond 502",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry result": {
+      "main": [
+        [
+          {
+            "node": "Route by tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by tier": {
+      "main": [
+        [
+          {
+            "node": "Use HubSpot?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark not pushed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark not pushed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Shape unknown tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use HubSpot?": {
+      "main": [
+        [
+          {
+            "node": "Upsert HubSpot contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CRM stub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert HubSpot contact": {
+      "main": [
+        [
+          {
+            "node": "Note HubSpot result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Note HubSpot failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note HubSpot result": {
+      "main": [
+        [
+          {
+            "node": "Log lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note HubSpot failure": {
+      "main": [
+        [
+          {
+            "node": "Log lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM stub": {
+      "main": [
+        [
+          {
+            "node": "Log lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark not pushed": {
+      "main": [
+        [
+          {
+            "node": "Log lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log lead": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

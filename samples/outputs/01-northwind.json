@@ -1,0 +1,47 @@
+{
+  "ok": true,
+  "duplicate": false,
+  "lead": {
+    "name": "Mara Ellison",
+    "email": "mara.ellison@northwind.example",
+    "company": "Northwind Provisions",
+    "website": "https://example.com",
+    "linkedinUrl": "https://example.com/in/mara-ellison",
+    "notes": "Founder of a wholesale supplier to independent cafes. About 40 people. Orders still arrive by email and are retyped into the CRM. Looking for someone to connect the inbox and HubSpot."
+  },
+  "website": {
+    "fetched": true,
+    "statusCode": 200,
+    "excerpt": "Example Domain This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.",
+    "error": null
+  },
+  "qualification": {
+    "summary": "Northwind Provisions supplies independent cafes and shops on a wholesale basis. Orders still arrive by email and are retyped into the CRM, which is the kind of handoff this offer is built for.",
+    "industry": "Wholesale food supply",
+    "companySize": "10-49",
+    "score": 86,
+    "tier": "hot",
+    "reasons": [
+      "The notes name a founder and a team of about 40 people, inside the ICP size range.",
+      "Retyping emailed orders into a CRM is a concrete repetitive handoff.",
+      "The company sells to other businesses rather than to consumers."
+    ],
+    "suggestedFirstLine": "The emailed orders you still retype into the CRM are a small, well bounded automation, and I would like to show you how I would connect that inbox to HubSpot."
+  },
+  "routing": {
+    "tier": "hot",
+    "action": "crm_upsert",
+    "crm": {
+      "provider": "stub",
+      "action": "upserted",
+      "id": "stub_mara_ellison_northwind_example"
+    },
+    "notification": "disabled"
+  },
+  "model": {
+    "mode": "mock",
+    "name": "claude-sonnet-5-5",
+    "attempts": 1,
+    "envAccess": true
+  }
+}

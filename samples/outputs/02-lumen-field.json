@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "duplicate": false,
+  "lead": {
+    "name": "Jonas Pell",
+    "email": "jonas.pell@lumenfield.example",
+    "company": "Lumen Field Services",
+    "website": "https://example.org",
+    "linkedinUrl": null,
+    "notes": "Operations manager. 18 technicians. Job sheets live in spreadsheets and a separate scheduling tool. Some automations already exist, but invoicing is still manual. B2B contracts with facilities teams."
+  },
+  "website": {
+    "fetched": true,
+    "statusCode": 200,
+    "excerpt": "Example Domain This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.",
+    "error": null
+  },
+  "qualification": {
+    "summary": "Lumen Field Services sends technicians to facilities clients and keeps job sheets in spreadsheets plus a separate scheduling tool. Invoicing is still manual, though some automations already exist.",
+    "industry": "Field services",
+    "companySize": "10-49",
+    "score": 64,
+    "tier": "warm",
+    "reasons": [
+      "An operations manager is named, with 18 technicians, which sits in the ICP size range.",
+      "Job sheets and invoicing still cross a spreadsheet and a scheduling tool.",
+      "Some automations already exist, so the remaining gap needs a look before a strong fit is claimed."
+    ],
+    "suggestedFirstLine": "You already have a few automations in place, and the manual step from job sheet to invoice looks like the next one worth mapping."
+  },
+  "routing": {
+    "tier": "warm",
+    "action": "review",
+    "crm": {
+      "provider": "none",
+      "action": "skipped"
+    },
+    "notification": "not_sent"
+  },
+  "model": {
+    "mode": "mock",
+    "name": "claude-sonnet-5-5",
+    "attempts": 1,
+    "envAccess": true
+  }
+}
